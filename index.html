@@ -1,0 +1,260 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Wächter">
+<title>Kamera-Wächter</title>
+<style>
+  :root{
+    --bg:#0d1013; --panel:#161b20; --line:#262e36; --fg:#e7edf2; --mute:#8794a1;
+    --ok:#3ddc97; --warn:#ffb020; --alarm:#ff3b3b;
+    --mono: ui-monospace, "SF Mono", Menlo, monospace;
+    color-scheme: dark;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%;margin:0;background:var(--bg);color:var(--fg);
+    font:15px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+    -webkit-user-select:none;user-select:none;-webkit-tap-highlight-color:transparent}
+  body{display:flex;flex-direction:column;
+    padding:env(safe-area-inset-top,0) max(12px,env(safe-area-inset-right,0px)) env(safe-area-inset-bottom,0) max(12px,env(safe-area-inset-left,0px))}
+  header{display:flex;align-items:center;justify-content:space-between;padding-block:10px}
+  h1{font-size:17px;margin:0;letter-spacing:.02em}
+  #state{font:600 12px var(--mono);letter-spacing:.08em;text-transform:uppercase;
+    padding:4px 10px;border-radius:99px;border:1px solid var(--line);color:var(--mute)}
+  #state.armed{color:var(--ok);border-color:var(--ok)}
+  #state.alarm{color:#fff;background:var(--alarm);border-color:var(--alarm)}
+  .stage{position:relative;flex:1;min-height:200px;border-radius:14px;overflow:hidden;background:#000;border:1px solid var(--line)}
+  video{width:100%;height:100%;object-fit:cover;display:block}
+  #overlay{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;image-rendering:pixelated;opacity:.75}
+  #flash{position:absolute;inset:0;background:var(--alarm);opacity:0;transition:opacity .15s;pointer-events:none}
+  #flash.on{opacity:.55}
+  #hint{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;padding:24px;text-align:center;color:var(--mute)}
+  #count{position:absolute;left:10px;top:10px;font:600 12px var(--mono);background:rgba(0,0,0,.55);padding:4px 8px;border-radius:8px}
+  .meter{height:10px;border-radius:5px;background:var(--panel);border:1px solid var(--line);position:relative;overflow:hidden;margin-top:10px}
+  #bar{height:100%;width:0;background:var(--ok);transition:width .08s linear}
+  #thr{position:absolute;top:-2px;bottom:-2px;width:2px;background:var(--warn)}
+  .controls{display:grid;gap:10px;padding-block:12px}
+  .row{display:grid;grid-template-columns:110px 1fr 44px;align-items:center;gap:10px}
+  .row label{color:var(--mute);font-size:13px}
+  .row output{font:12px var(--mono);text-align:right;color:var(--fg)}
+  input[type=range]{width:100%;accent-color:var(--warn)}
+  select{background:var(--panel);color:var(--fg);border:1px solid var(--line);border-radius:8px;padding:6px 8px;font-size:14px;width:100%}
+  .btns{display:grid;grid-template-columns:1fr auto;gap:10px;padding-bottom:12px}
+  button{font:600 16px -apple-system,sans-serif;border:0;border-radius:12px;padding:15px;color:#0d1013;background:var(--ok)}
+  button.stop{background:var(--alarm);color:#fff}
+  button.sec{background:var(--panel);color:var(--fg);border:1px solid var(--line);padding:15px 18px}
+  button:focus-visible{outline:2px solid var(--warn);outline-offset:2px}
+  .small{font-size:12px;color:var(--mute)}
+</style>
+</head>
+<body>
+<header>
+  <h1>Kamera-Wächter</h1>
+  <span id="state">Aus</span>
+</header>
+
+<div class="stage">
+  <video id="v" playsinline muted autoplay></video>
+  <canvas id="overlay"></canvas>
+  <div id="flash"></div>
+  <div id="count" hidden>Alarme: 0</div>
+  <div id="hint">
+    <div style="font-size:40px">◉</div>
+    <div>Handy ruhig hinlegen oder aufstellen, dann <b>Start</b> tippen.</div>
+    <div class="small">Lautlos-Schalter aus und Lautstärke hoch, damit man den Alarm hört.</div>
+  </div>
+</div>
+
+<div class="meter" aria-label="Bewegung"><div id="bar"></div><div id="thr"></div></div>
+
+<div class="controls">
+  <div class="row">
+    <label for="sens">Empfindlichkeit</label>
+    <input id="sens" type="range" min="1" max="100" value="85">
+    <output id="sensOut">85</output>
+  </div>
+  <div class="row">
+    <label for="vol">Lautstärke</label>
+    <input id="vol" type="range" min="0" max="100" value="100">
+    <output id="volOut">100</output>
+  </div>
+  <div class="row">
+    <label for="cool">Pause nach Alarm</label>
+    <input id="cool" type="range" min="0" max="10" value="2">
+    <output id="coolOut">2 s</output>
+  </div>
+  <div class="row">
+    <label for="cam">Kamera</label>
+    <select id="cam" style="grid-column:span 2">
+      <option value="environment">Rückkamera</option>
+      <option value="user">Frontkamera</option>
+    </select>
+  </div>
+  <div class="row">
+    <label for="sound">Ton</label>
+    <select id="sound" style="grid-column:span 2">
+      <option value="siren">Sirene (laut)</option>
+      <option value="beep">Piep</option>
+      <option value="chirp">Kurzes Zwitschern</option>
+    </select>
+  </div>
+</div>
+
+<div class="btns">
+  <button id="go">Start</button>
+  <button id="test" class="sec">Ton testen</button>
+</div>
+
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  const v = $('v'), ov = $('overlay'), oc = ov.getContext('2d');
+  const W = 96, H = 72;                   // analysis resolution
+  const work = document.createElement('canvas'); work.width = W; work.height = H;
+  const wc = work.getContext('2d', { willReadFrequently: true });
+  ov.width = W; ov.height = H;
+  const heat = oc.createImageData(W, H);
+
+  let stream = null, running = false, bg = null, raf = 0, warm = 0;
+  let lastAlarm = 0, alarms = 0, wakeLock = null, ctx = null;
+
+  // ---------- settings ----------
+  const sens = $('sens'), vol = $('vol'), cool = $('cool');
+  const load = () => { try { const s = JSON.parse(localStorage.getItem('kw') || '{}');
+      if (s.sens) sens.value = s.sens; if (s.vol != null) vol.value = s.vol;
+      if (s.cool != null) cool.value = s.cool; if (s.cam) $('cam').value = s.cam; if (s.sound) $('sound').value = s.sound;
+    } catch (e) {} };
+  const save = () => { try { localStorage.setItem('kw', JSON.stringify({
+      sens: sens.value, vol: vol.value, cool: cool.value, cam: $('cam').value, sound: $('sound').value })); } catch (e) {} };
+  const sync = () => {
+    $('sensOut').textContent = sens.value; $('volOut').textContent = vol.value;
+    $('coolOut').textContent = cool.value + ' s';
+    $('thr').style.left = (thresholdPct() / maxPct * 100) + '%';
+    save();
+  };
+  // sensitivity 1..100 -> pixel delta threshold and area threshold
+  const pixDelta = () => Math.round(40 - (sens.value / 100) * 32);     // 40 .. 8 grey levels
+  const thresholdPct = () => 4 * Math.pow(0.012, sens.value / 100);   // 4% .. ~0.05% of image
+  const maxPct = 5;
+  load();
+  [sens, vol, cool].forEach(el => el.addEventListener('input', sync));
+  $('cam').addEventListener('change', () => { save(); if (running) { stop(); start(); } });
+  $('sound').addEventListener('change', save);
+  sync();
+
+  // ---------- audio ----------
+  function audio() {
+    try { if (navigator.audioSession) navigator.audioSession.type = 'playback'; } catch (e) {}
+    if (!ctx) ctx = new (window.AudioContext || window.webkitAudioContext)();
+    if (ctx.state === 'suspended') ctx.resume();
+    return ctx;
+  }
+  function tone(type, f1, f2, t0, dur, g) {
+    const a = ctx, o = a.createOscillator(), gn = a.createGain();
+    o.type = type; o.frequency.setValueAtTime(f1, t0);
+    if (f2) o.frequency.linearRampToValueAtTime(f2, t0 + dur);
+    gn.gain.setValueAtTime(0, t0);
+    gn.gain.linearRampToValueAtTime(g, t0 + 0.01);
+    gn.gain.setValueAtTime(g, t0 + dur - 0.02);
+    gn.gain.linearRampToValueAtTime(0, t0 + dur);
+    o.connect(gn).connect(a.destination); o.start(t0); o.stop(t0 + dur + 0.02);
+  }
+  function alarmSound() {
+    const a = audio(), t = a.currentTime, g = vol.value / 100;
+    if (g <= 0) return;
+    const kind = $('sound').value;
+    if (kind === 'siren') { for (let i = 0; i < 3; i++) { tone('square', 900, 1800, t + i * 0.36, 0.18, g * 0.5); tone('square', 1800, 900, t + i * 0.36 + 0.18, 0.18, g * 0.5); } }
+    else if (kind === 'beep') { for (let i = 0; i < 3; i++) tone('square', 2700, 0, t + i * 0.22, 0.14, g * 0.6); }
+    else { tone('sine', 1800, 3200, t, 0.09, g * 0.8); tone('sine', 1800, 3200, t + 0.13, 0.09, g * 0.8); }
+    if (navigator.vibrate) navigator.vibrate(300);
+  }
+
+  // ---------- camera ----------
+  async function start() {
+    audio();
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: $('cam').value, width: { ideal: 640 }, height: { ideal: 480 } }, audio: false });
+    } catch (e) {
+      $('hint').hidden = false;
+      $('hint').innerHTML = '<div style="font-size:32px">⚠︎</div><div>Kein Kamerazugriff.</div>' +
+        '<div class="small">' + (location.protocol === 'https:' || location.hostname === 'localhost'
+          ? 'Bitte Kamera in Safari erlauben: aA-Symbol in der Adressleiste → Website-Einstellungen → Kamera.'
+          : 'Die Seite muss über https geöffnet werden, sonst blockiert Safari die Kamera.') + '</div>';
+      return;
+    }
+    v.srcObject = stream; await v.play().catch(() => {});
+    v.style.transform = $('cam').value === 'user' ? 'scaleX(-1)' : '';
+    ov.style.transform = v.style.transform;
+    running = true; bg = null; warm = 0;
+    $('hint').hidden = true; $('count').hidden = false;
+    $('go').textContent = 'Stopp'; $('go').classList.add('stop');
+    setState('armed', 'Scharf');
+    try { wakeLock = await navigator.wakeLock?.request('screen'); } catch (e) {}
+    loop();
+  }
+  function stop() {
+    running = false; cancelAnimationFrame(raf);
+    if (stream) stream.getTracks().forEach(t => t.stop()); stream = null;
+    try { wakeLock && wakeLock.release(); } catch (e) {} wakeLock = null;
+    oc.clearRect(0, 0, W, H); $('bar').style.width = '0';
+    $('go').textContent = 'Start'; $('go').classList.remove('stop');
+    setState('', 'Aus');
+  }
+  function setState(cls, txt) { const s = $('state'); s.className = cls; s.textContent = txt; }
+
+  // ---------- detection ----------
+  function loop() {
+    if (!running) return;
+    raf = requestAnimationFrame(loop);
+    if (v.readyState < 2) return;
+    wc.drawImage(v, 0, 0, W, H);
+    const px = wc.getImageData(0, 0, W, H).data;
+    const n = W * H;
+    if (!bg) { bg = new Float32Array(n); for (let i = 0; i < n; i++) bg[i] = lum(px, i); return; }
+
+    const d = pixDelta(); let changed = 0; const hd = heat.data;
+    // global brightness shift compensation (auto exposure)
+    let meanNow = 0, meanBg = 0;
+    for (let i = 0; i < n; i++) { meanNow += lum(px, i); meanBg += bg[i]; }
+    const shift = (meanNow - meanBg) / n;
+    for (let i = 0; i < n; i++) {
+      const y = lum(px, i), diff = Math.abs(y - shift - bg[i]);
+      const hit = diff > d;
+      if (hit) changed++;
+      bg[i] += (y - bg[i]) * (hit ? 0.02 : 0.15);   // slow adapt where motion, fast elsewhere
+      const j = i * 4; hd[j] = 255; hd[j + 1] = 59; hd[j + 2] = 59; hd[j + 3] = hit ? 200 : 0;
+    }
+    oc.putImageData(heat, 0, 0);
+    const pct = changed / n * 100;
+    $('bar').style.width = Math.min(100, pct / maxPct * 100) + '%';
+    $('bar').style.background = pct > thresholdPct() ? 'var(--alarm)' : 'var(--ok)';
+
+    if (warm < 20) { warm++; return; }           // let camera settle
+    const now = performance.now();
+    if (pct > thresholdPct() && now - lastAlarm > cool.value * 1000 + 300) {
+      lastAlarm = now; alarms++;
+      $('count').textContent = 'Alarme: ' + alarms + ' · ' + new Date().toLocaleTimeString('de-AT');
+      alarmSound(); flash();
+    }
+  }
+  const lum = (p, i) => { const j = i * 4; return p[j] * 0.299 + p[j + 1] * 0.587 + p[j + 2] * 0.114; };
+  function flash() {
+    $('flash').classList.add('on'); setState('alarm', 'Bewegung!');
+    setTimeout(() => { $('flash').classList.remove('on'); if (running) setState('armed', 'Scharf'); }, 700);
+  }
+
+  $('go').addEventListener('click', () => running ? stop() : start());
+  $('test').addEventListener('click', alarmSound);
+  document.addEventListener('visibilitychange', async () => {
+    if (document.visibilityState === 'visible' && running && !wakeLock) {
+      try { wakeLock = await navigator.wakeLock?.request('screen'); } catch (e) {}
+    }
+  });
+})();
+</script>
+</body>
+</html>
