@@ -1,0 +1,291 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Lupe">
+<meta name="theme-color" content="#000000">
+<title>Lupe</title>
+<style>
+  /* Vollbild-Kamerabild oben, festes Bedienfeld unten; Foto = exakt der sichtbare Bildbereich */
+  :root{
+    --bg:#000; --panel:#121417; --line:#2a2f35; --fg:#f2f4f6; --mute:#98a1ab; --acc:#ffd23f;
+    color-scheme: dark;
+  }
+  *{box-sizing:border-box}
+  [hidden]{display:none!important}
+  html,body{height:100%;margin:0;background:var(--bg);color:var(--fg);overflow:hidden;overscroll-behavior:none;
+    font:15px/1.35 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+    -webkit-user-select:none;user-select:none;-webkit-tap-highlight-color:transparent;-webkit-touch-callout:none}
+  body{display:flex;flex-direction:column;padding-top:env(safe-area-inset-top,0px)}
+  #stage{position:relative;flex:1;min-height:0;overflow:hidden;background:#000;touch-action:none}
+  video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;transform-origin:50% 50%;will-change:transform}
+  #flash{position:absolute;inset:0;background:#fff;opacity:0;pointer-events:none;transition:opacity .25s}
+  #flash.on{opacity:.8;transition:none}
+  #chip{position:absolute;top:10px;left:50%;transform:translateX(-50%);font:600 13px ui-monospace,"SF Mono",Menlo,monospace;
+    background:rgba(0,0,0,.55);padding:4px 10px;border-radius:99px;pointer-events:none;font-variant-numeric:tabular-nums}
+  #err{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;padding:24px;text-align:center;color:var(--mute)}
+  #err button{background:var(--acc);color:#000;border:0;border-radius:12px;padding:12px 20px;font:600 16px -apple-system,sans-serif}
+
+  #panel{background:var(--panel);border-top:1px solid var(--line);
+    padding:10px max(16px,env(safe-area-inset-right,0px)) calc(10px + env(safe-area-inset-bottom,0px)) max(16px,env(safe-area-inset-left,0px));
+    display:grid;gap:4px}
+  .row{display:grid;grid-template-columns:86px 1fr 52px;align-items:center;gap:10px}
+  .row label{color:var(--mute);font-size:13px}
+  .row output{font:600 13px ui-monospace,"SF Mono",Menlo,monospace;text-align:right;font-variant-numeric:tabular-nums}
+  input[type=range]{width:100%;height:34px;accent-color:var(--acc);margin:0}
+  .bar{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:12px;padding-top:6px}
+  select,.pill{font:600 14px -apple-system,sans-serif;color:var(--fg);background:#1d2126;border:1px solid var(--line);border-radius:99px;padding:10px 14px;max-width:100%}
+  select{justify-self:start;-webkit-appearance:none;appearance:none;text-overflow:ellipsis}
+  .pill{justify-self:end;display:flex;align-items:center;gap:6px}
+  .pill.on{background:var(--acc);color:#000;border-color:var(--acc)}
+  .pill:disabled,select:disabled{opacity:.4}
+  #shot{width:72px;height:72px;border-radius:50%;border:4px solid #fff;background:#fff;box-shadow:inset 0 0 0 4px #000;padding:0}
+  #shot:active{transform:scale(.93)}
+  button:focus-visible,select:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
+
+  #prev{position:fixed;inset:0;z-index:5;background:rgba(0,0,0,.96);display:flex;flex-direction:column;
+    padding:calc(12px + env(safe-area-inset-top,0px)) max(16px,env(safe-area-inset-right,0px)) calc(14px + env(safe-area-inset-bottom,0px)) max(16px,env(safe-area-inset-left,0px));gap:10px}
+  #pimg{flex:1;min-height:0;width:100%;object-fit:contain;-webkit-touch-callout:default;-webkit-user-select:auto;user-select:auto}
+  #pinfo{text-align:center;color:var(--mute);font-size:13px}
+  .pbtns{display:grid;grid-template-columns:1fr 2fr;gap:10px}
+  .pbtns button{border:0;border-radius:12px;padding:15px;font:600 16px -apple-system,sans-serif}
+  #close{background:#1d2126;color:var(--fg)}
+  #save{background:var(--acc);color:#000}
+</style>
+</head>
+<body>
+<div id="stage">
+  <video id="v" playsinline muted autoplay></video>
+  <div id="flash"></div>
+  <div id="chip">1,0×</div>
+  <div id="err" hidden>
+    <div id="errmsg">Kamera wird gestartet …</div>
+    <button id="retry">Kamera starten</button>
+  </div>
+</div>
+
+<div id="panel">
+  <div class="row">
+    <label for="zoom">Zoom</label>
+    <input id="zoom" type="range" min="0" max="1000" value="0">
+    <output id="zv">1,0×</output>
+  </div>
+  <div class="row">
+    <label for="bright">Helligkeit</label>
+    <input id="bright" type="range" min="-100" max="100" value="0">
+    <output id="bv">0</output>
+  </div>
+  <div class="bar">
+    <select id="lens" aria-label="Kameralinse"><option>Kamera</option></select>
+    <button id="shot" aria-label="Foto aufnehmen"></button>
+    <button id="torch" class="pill" aria-pressed="false">
+      <svg width="14" height="16" viewBox="0 0 14 16" aria-hidden="true"><path d="M8 0 1 9h5l-1 7 8-10H8z" fill="currentColor"/></svg>Licht
+    </button>
+  </div>
+</div>
+
+<div id="prev" hidden>
+  <img id="pimg" alt="Aufgenommenes Foto">
+  <div id="pinfo"></div>
+  <div class="pbtns">
+    <button id="close">Zurück</button>
+    <button id="save">In Fotos sichern</button>
+  </div>
+</div>
+
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  const video = $('v'), stage = $('stage'), zS = $('zoom'), bS = $('bright'), lensSel = $('lens'), torchB = $('torch');
+  const ZMAX = 15;
+
+  let stream = null, track = null, hasZoom = false, hwMin = 1, hwMax = 1, hasTorch = false;
+  let digital = 1, torchOn = false, front = false, lastFile = null, lastUrl = null, starting = false;
+
+  // ---------- gespeicherte Einstellungen ----------
+  let saved = {};
+  try { saved = JSON.parse(localStorage.getItem('lupe') || '{}'); } catch (e) {}
+  if (saved.z != null) zS.value = saved.z;
+  if (saved.b != null) bS.value = saved.b;
+  const persist = () => { try { localStorage.setItem('lupe', JSON.stringify({ z: zS.value, b: bS.value, lens: lensSel.value })); } catch (e) {} };
+
+  const zoomVal = () => Math.exp(Math.log(ZMAX) * zS.value / 1000);
+  const sliderFor = z => Math.round(1000 * Math.log(z) / Math.log(ZMAX));
+  const brightF = () => Math.pow(2, bS.value / 60);
+  const fmt = z => z.toFixed(z < 10 ? 1 : 0).replace('.', ',') + '×';
+
+  // canvas filter support (sonst Pixel-Schleife)
+  const canFilter = (() => { try { const t = document.createElement('canvas').getContext('2d'); if (!('filter' in t)) return false; t.filter = 'brightness(2)'; return t.filter === 'brightness(2)'; } catch (e) { return false; } })();
+
+  // ---------- Kamera ----------
+  async function start(id) {
+    if (starting) return; starting = true;
+    if (stream) stream.getTracks().forEach(t => t.stop());
+    const v = { width: { ideal: 3840 }, height: { ideal: 2160 } };
+    if (id) v.deviceId = { exact: id }; else v.facingMode = { ideal: 'environment' };
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ video: v, audio: false });
+    } catch (e) {
+      starting = false;
+      if (id) return start(null);
+      showErr(location.protocol !== 'https:' && location.hostname !== 'localhost'
+        ? 'Die Seite muss über https geöffnet werden, sonst blockiert Safari die Kamera.'
+        : 'Kein Kamerazugriff. In Safari: aA-Symbol → Website-Einstellungen → Kamera → Erlauben.');
+      return;
+    }
+    track = stream.getVideoTracks()[0];
+    video.srcObject = stream;
+    await video.play().catch(() => {});
+    const caps = track.getCapabilities ? track.getCapabilities() : {};
+    const set = track.getSettings ? track.getSettings() : {};
+    hasZoom = !!(caps.zoom && caps.zoom.max > caps.zoom.min);
+    hwMin = hasZoom ? Math.max(caps.zoom.min, 1e-3) : 1;
+    hwMax = hasZoom ? Math.min(caps.zoom.max, hwMin * ZMAX) : 1;
+    hasTorch = !!caps.torch;
+    front = set.facingMode === 'user' || /front|vorder/i.test(track.label);
+    if (!hasTorch) torchOn = false;
+    torchB.disabled = !hasTorch;
+    torchB.classList.toggle('on', torchOn);
+    torchB.setAttribute('aria-pressed', torchOn);
+    $('err').hidden = true;
+    await listLenses(set.deviceId);
+    starting = false;
+    applyZoom(true); applyBright();
+  }
+
+  function showErr(msg) { $('errmsg').textContent = msg; $('err').hidden = false; }
+
+  async function listLenses(cur) {
+    let devs = [];
+    try { devs = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === 'videoinput'); } catch (e) {}
+    lensSel.innerHTML = '';
+    devs.forEach((d, i) => {
+      const o = document.createElement('option');
+      o.value = d.deviceId; o.textContent = shortName(d.label, i);
+      lensSel.appendChild(o);
+    });
+    if (cur && devs.some(d => d.deviceId === cur)) lensSel.value = cur;
+    lensSel.disabled = devs.length < 2;
+    persist();
+  }
+  function shortName(l, i) {
+    if (!l) return 'Kamera ' + (i + 1);
+    if (/front|vorder/i.test(l)) return 'Frontkamera';
+    if (/ultra/i.test(l)) return 'Ultraweit';
+    if (/triple/i.test(l)) return 'Automatisch (alle)';
+    if (/dual.?(weit|wide)/i.test(l)) return 'Automatisch (Weit+Ultraweit)';
+    if (/dual/i.test(l)) return 'Automatisch (Weit+Tele)';
+    if (/tele/i.test(l)) return 'Tele';
+    if (/rück|back|rear/i.test(l)) return 'Weitwinkel';
+    return l;
+  }
+
+  // Hardware-Zoom gedrosselt anwenden
+  let applying = false, pending = null;
+  async function hw(z) {
+    pending = z; if (applying) return; applying = true;
+    while (pending != null) {
+      const x = pending; pending = null;
+      const adv = { zoom: x }; if (hasTorch) adv.torch = torchOn;
+      try { await track.applyConstraints({ advanced: [adv] }); } catch (e) {}
+    }
+    applying = false;
+  }
+
+  function applyZoom(force) {
+    const z = zoomVal();
+    $('zv').textContent = fmt(z); $('chip').textContent = fmt(z);
+    let hz = hwMin;
+    if (hasZoom && track) { hz = Math.min(hwMin * z, hwMax); hw(hz); }
+    digital = (hwMin * z) / hz;
+    video.style.transform = (front ? 'scaleX(-1) ' : '') + 'scale(' + digital + ')';
+    persist();
+  }
+  function applyBright() {
+    const v = +bS.value;
+    $('bv').textContent = (v > 0 ? '+' : '') + v;
+    video.style.filter = v ? 'brightness(' + brightF() + ')' : '';
+    persist();
+  }
+  async function applyTorch() {
+    torchB.classList.toggle('on', torchOn); torchB.setAttribute('aria-pressed', torchOn);
+    try { await track.applyConstraints({ advanced: [{ torch: torchOn }] }); } catch (e) { torchOn = false; torchB.classList.remove('on'); }
+  }
+
+  // ---------- Foto ----------
+  async function shoot() {
+    if (!track || video.readyState < 2) return;
+    const vw = video.videoWidth, vh = video.videoHeight, r = stage.getBoundingClientRect();
+    const cs = Math.max(r.width / vw, r.height / vh);
+    const sw = Math.max(1, Math.round(r.width / (cs * digital)));
+    const sh = Math.max(1, Math.round(r.height / (cs * digital)));
+    const sx = Math.round((vw - sw) / 2), sy = Math.round((vh - sh) / 2);
+    const c = document.createElement('canvas'); c.width = sw; c.height = sh;
+    const g = c.getContext('2d');
+    const b = brightF(), useB = +bS.value !== 0;
+    if (useB && canFilter) g.filter = 'brightness(' + b + ')';
+    g.drawImage(video, sx, sy, sw, sh, 0, 0, sw, sh);
+    if (useB && !canFilter) {
+      const d = g.getImageData(0, 0, sw, sh), a = d.data;
+      for (let i = 0; i < a.length; i += 4) { a[i] *= b; a[i + 1] *= b; a[i + 2] *= b; }
+      g.putImageData(d, 0, 0);
+    }
+    $('flash').classList.add('on'); requestAnimationFrame(() => requestAnimationFrame(() => $('flash').classList.remove('on')));
+    const blob = await new Promise(res => c.toBlob(res, 'image/jpeg', 0.93));
+    if (!blob) return;
+    const t = new Date(), p = n => String(n).padStart(2, '0');
+    const name = `Lupe_${t.getFullYear()}-${p(t.getMonth() + 1)}-${p(t.getDate())}_${p(t.getHours())}-${p(t.getMinutes())}-${p(t.getSeconds())}.jpg`;
+    lastFile = new File([blob], name, { type: 'image/jpeg' });
+    if (lastUrl) URL.revokeObjectURL(lastUrl);
+    lastUrl = URL.createObjectURL(blob);
+    $('pimg').src = lastUrl;
+    $('pinfo').textContent = sw + ' × ' + sh + ' px · Zoom ' + fmt(zoomVal()) + ' · „Bild sichern“ wählen oder lange aufs Bild drücken';
+    $('prev').hidden = false;
+  }
+
+  $('save').addEventListener('click', async () => {
+    if (!lastFile) return;
+    if (navigator.canShare && navigator.canShare({ files: [lastFile] })) {
+      try { await navigator.share({ files: [lastFile] }); } catch (e) {}
+    } else {
+      const a = document.createElement('a'); a.href = lastUrl; a.download = lastFile.name;
+      document.body.appendChild(a); a.click(); a.remove();
+    }
+  });
+  $('close').addEventListener('click', () => { $('prev').hidden = true; });
+
+  // ---------- Bedienung ----------
+  zS.addEventListener('input', () => applyZoom());
+  bS.addEventListener('input', applyBright);
+  bS.addEventListener('dblclick', () => { bS.value = 0; applyBright(); });
+  lensSel.addEventListener('change', () => { persist(); start(lensSel.value); });
+  torchB.addEventListener('click', () => { if (!hasTorch) return; torchOn = !torchOn; applyTorch(); });
+  $('shot').addEventListener('click', shoot);
+  $('retry').addEventListener('click', () => start(lensSel.value || null));
+
+  // Zwei-Finger-Zoom im Bild
+  const pts = new Map(); let pinch = null;
+  const dist = () => { const [a, b] = [...pts.values()]; return Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY) || 1; };
+  stage.addEventListener('pointerdown', e => { pts.set(e.pointerId, e); if (pts.size === 2) pinch = { d: dist(), z: zoomVal() }; });
+  stage.addEventListener('pointermove', e => {
+    if (!pts.has(e.pointerId)) return; pts.set(e.pointerId, e);
+    if (pts.size === 2 && pinch) { const z = Math.min(ZMAX, Math.max(1, pinch.z * dist() / pinch.d)); zS.value = sliderFor(z); applyZoom(); }
+  });
+  const up = e => { pts.delete(e.pointerId); if (pts.size < 2) pinch = null; };
+  ['pointerup', 'pointercancel', 'pointerleave'].forEach(t => stage.addEventListener(t, up));
+  document.addEventListener('gesturestart', e => e.preventDefault());
+
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible' && (!track || track.readyState === 'ended')) start(lensSel.value || saved.lens || null);
+  });
+
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) showErr('Dieser Browser unterstützt keinen Kamerazugriff.');
+  else start(saved.lens || null);
+})();
+</script>
+</body>
+</html>
